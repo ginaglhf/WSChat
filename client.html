@@ -1,0 +1,97 @@
+<!doctype html>
+<meta charset="utf-8"/>
+<title>WSChat</title>
+<style>
+  body{font:14px/1.4 ui-monospace,monospace;max-width:720px;margin:2rem auto}
+  input,button{font:inherit;padding:.35rem .6rem}
+  #log{border:1px solid #ddd;padding:.6rem;height:260px;overflow:auto;white-space:pre-wrap}
+</style>
+<body>
+<h3>WSChat (MVP)</h3>
+<label>User token: <input id="token" value="u42"></label>
+<button id="connect">Connect</button>
+<span id="status">disconnected</span>
+
+<hr/>
+<button id="create">Create chat (with u77)</button>
+<label>chatId: <input id="chatId" placeholder="ch_1"></label>
+
+<div>
+  <input id="msg" placeholder="type message...">
+  <button id="send">Send</button>
+</div>
+
+<h4>Log</h4>
+<div id="log"></div>
+
+<script>
+let ws, id=1;
+
+const log = x => { const el = document.getElementById('log'); el.textContent+=x+"\n"; el.scrollTop=el.scrollHeight; };
+
+function isOpen(){ return ws && ws.readyState === WebSocket.OPEN; }
+
+function send(obj){
+  if (isOpen()){
+    ws.send(JSON.stringify(obj));
+  }else{
+    log("⚠️ socket not open, cannot send: " + JSON.stringify(obj));
+  }
+}
+
+function toggleUi(connected){
+  document.getElementById('create').disabled = !connected;
+  document.getElementById('send').disabled   = !connected;
+}
+toggleUi(false); // start disabled
+
+document.getElementById('connect').onclick = () => {
+  // close old socket if still open
+  if (isOpen()) ws.close(1000, "reconnect");
+
+  ws = new WebSocket("ws://localhost:8765/rt");
+  document.getElementById('status').textContent = "connecting...";
+
+  ws.onopen = () => {
+    document.getElementById('status').textContent = "connected";
+    const token = document.getElementById('token').value.trim();
+    send({ type:"auth", id:`c${id++}`, data:{ token } });
+    toggleUi(true);
+  };
+
+  ws.onmessage = ev => {
+    const m = JSON.parse(ev.data);
+    log("← " + JSON.stringify(m));
+
+    // auto-fill chatId after createChat
+    if (m.type === "createChat.result" && m.data && m.data.chatId){
+      document.getElementById('chatId').value = m.data.chatId;
+    }
+
+    // ack server events
+    if (m.type === "chatUpdate" || m.type === "newMessage"){
+      send({ type:"ack", ackOf: m.id });
+    }
+  };
+
+  ws.onclose  = (e) => { document.getElementById('status').textContent = `closed (${e.code})`; toggleUi(false); };
+  ws.onerror  = () => { document.getElementById('status').textContent = "error"; toggleUi(false); };
+};
+
+document.getElementById('create').onclick = () => {
+  const me = document.getElementById('token').value.trim();
+  const participants = [me, "u77"].filter((v,i,a)=>a.indexOf(v)===i);
+  const msg = { type:"createChat", id:`c${id++}`, data:{ participants, name:"Demo" } };
+  log("→ " + JSON.stringify(msg)); send(msg);
+};
+
+document.getElementById('send').onclick = () => {
+  const chatId = document.getElementById('chatId').value.trim();
+  if (!chatId) return alert("enter chatId");
+  const text = document.getElementById('msg').value;
+  const msg = { type:"sendMessage", id:`c${id++}`, data:{ chatId, message: text, idemKey:`m-${Date.now()}` } };
+  log("→ " + JSON.stringify(msg)); send(msg);
+  document.getElementById('msg').value = "";
+};
+</script>
+</body>
